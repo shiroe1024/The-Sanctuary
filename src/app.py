@@ -2,7 +2,7 @@ import streamlit as st
 import logging
 from utils import extract_video_id
 from database import init_db, add_video, get_video, save_quiz, get_quiz
-from curator import analyze_text_direct
+from curator import get_transcript, analyze_video
 
 # --- SETUP ---
 st.set_page_config(page_title="The Sanctuary", page_icon="🏛️", layout="wide")
@@ -14,6 +14,7 @@ st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FAFAFA; }
     .success-box { padding: 10px; background-color: #1B2618; border-left: 5px solid #4CAF50; margin-top: 10px; }
+    .error-box { padding: 10px; background-color: #261818; border-left: 5px solid #FF5252; margin-top: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -39,54 +40,58 @@ def render_quiz(video_id):
                 st.balloons()
                 st.markdown('<div class="success-box">✅ Access Granted.</div>', unsafe_allow_html=True)
             else:
-                st.error(f"❌ Verification Failed. Score: {score}/{len(quiz_data)}")
+                st.markdown(f'<div class="error-box">❌ Failed. Score: {score}/{len(quiz_data)}</div>', unsafe_allow_html=True)
 
 def main():
     st.title("🏛️ The Sanctuary")
-    st.caption("Sovereign Verification Layer | Manual Override Active")
+    st.caption("Enterprise Verification Layer | Powered by Supadata")
     st.divider()
 
-    # --- SIDEBAR: DUAL INPUT ---
     with st.sidebar:
-        st.header("Ingestion Protocol")
-        url_input = st.text_input("1. YouTube URL")
+        st.header("Submit Content")
+        url_input = st.text_input("YouTube URL")
         
-        # The "Sovereign" Input
-        transcript_input = st.text_area("2. Paste Transcript Here", height=300, 
-            help="Copy the transcript from YouTube (Show Transcript -> Toggle Timestamps -> Copy).")
-        
-        if st.button("Mint to Library"):
+        if st.button("Mint Video"):
             vid = extract_video_id(url_input)
-            if vid and transcript_input:
+            if vid:
                 st.session_state['current_video_id'] = vid
                 
-                # Direct AI Analysis on the pasted text
-                with st.spinner("Processing Logic..."):
-                    analysis = analyze_text_direct(transcript_input)
-                    if analysis:
-                        add_video(vid, "Manual Entry", "Unknown", transcript_input)
-                        save_quiz(vid, analysis['questions'])
-                        st.success("✅ Minted successfully!")
-                        st.rerun()
-                    else:
-                        st.error("AI Analysis Failed. Check text quality.")
+                # Check DB first
+                if get_video(vid):
+                    st.success("Loaded from Library.")
+                else:
+                    # COLD START: Use the API Key!
+                    with st.status("🚀 Initializing Enterprise Uplink...", expanded=True) as status:
+                        st.write("Contacting Supadata Proxy Node...")
+                        transcript = get_transcript(vid)
+                        
+                        if transcript:
+                            st.write("✅ Transcript Secured. Running AI...")
+                            analysis = analyze_video(transcript)
+                            
+                            if analysis:
+                                add_video(vid, "Title", "Channel", transcript)
+                                save_quiz(vid, analysis['questions'])
+                                status.update(label="✅ Minted Successfully", state="complete")
+                                st.rerun()
+                            else:
+                                status.update(label="❌ AI Analysis Failed", state="error")
+                        else:
+                            status.update(label="❌ API Connection Failed (Check Secrets)", state="error")
             else:
-                st.warning("Please provide both URL and Transcript.")
+                st.error("Invalid URL")
 
-    # --- MAIN STAGE ---
+    # MAIN DISPLAY
     if st.session_state['current_video_id']:
         vid = st.session_state['current_video_id']
         col_video, col_quiz = st.columns([2, 1], gap="medium")
         
         with col_video:
             st.video(f"https://www.youtube.com/watch?v={vid}")
-        
+            
         with col_quiz:
-            # Check if quiz exists
             if get_quiz(vid):
                 render_quiz(vid)
-            else:
-                st.info("👈 Paste transcript in sidebar to generate Quiz.")
 
 if __name__ == "__main__":
     main()
