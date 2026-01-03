@@ -1,19 +1,22 @@
+import requests
 import json
 import logging
 from openai import OpenAI
 import streamlit as st
 import os
 
+# --- CONFIG ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI
 try:
-    api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-    client = OpenAI(api_key=api_key)
+    openai_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+    rapid_key = st.secrets.get("RAPIDAPI_KEY", os.getenv("RAPIDAPI_KEY"))
+    client = OpenAI(api_key=openai_key)
 except Exception:
     client = None
 
+# --- CONSTANTS ---
 THE_ATLAS = {
     "Formal Sciences": ["Logic", "Mathematics", "Computer Science"],
     "Natural Sciences": ["Physics", "Chemistry", "Biology"],
@@ -22,25 +25,59 @@ THE_ATLAS = {
     "Applied Sciences": ["Engineering", "Medicine", "Business"]
 }
 
-def analyze_text_direct(raw_text: str):
+def get_transcript(video_id: str):
     """
-    Directly analyzes text pasted by the user.
-    Zero dependency on YouTube APIs.
+    Enterprise Method: Uses Supadata via RapidAPI.
     """
-    if not client: return None
-    if len(raw_text) < 50: return None # Too short
+    if not rapid_key:
+        logger.error("RapidAPI Key missing.")
+        return None
+
+    # SUPADATA ENDPOINT
+    url = "https://youtube-transcripts.p.rapidapi.com/youtube/transcript"
     
-    # Truncate to save tokens (approx 15k chars is plenty)
-    clean_text = raw_text[:15000]
+    # Supadata expects the full URL, not just the ID
+    querystring = {
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "chunkSize": "500" 
+    }
 
+    headers = {
+        "x-rapidapi-key": rapid_key,
+        "x-rapidapi-host": "youtube-transcripts.p.rapidapi.com"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=querystring)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Supadata Format: {"content": [{"text": "...", ...}, ...]}
+            if 'content' in data:
+                # Join all text segments
+                full_text = " ".join([item['text'] for item in data['content']])
+                return full_text
+            
+            return str(data)
+            
+        else:
+            logger.error(f"RapidAPI Error: {response.status_code} - {response.text}")
+            return None
+
+    except Exception as e:
+        logger.error(f"API Connection Failed: {e}")
+        return None
+
+def analyze_video(transcript: str):
+    if not client: return None
+    
     prompt = f"""
-    You are the Curator.
-    TASK: Classify this text into: {json.dumps(list(THE_ATLAS.keys()))}
+    Classify into Roots: {json.dumps(list(THE_ATLAS.keys()))}
     Create 3 verification questions (A,B,C) based on this text.
-    OUTPUT JSON: {{ "root_category": "...", "questions": [{{ "q": "...", "options": ["A..","B.."], "correct": "A" }}] }}
-    TEXT: {clean_text}
+    OUTPUT JSON: {{ "root_category": "...", "questions": [...] }}
+    TEXT: {transcript[:15000]}
     """
-
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -48,6 +85,5 @@ def analyze_text_direct(raw_text: str):
             response_format={"type": "json_object"}
         )
         return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        logger.error(f"AI Error: {e}")
+    except Exception:
         return None
