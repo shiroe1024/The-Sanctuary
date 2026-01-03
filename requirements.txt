@@ -1,6 +1,4 @@
 streamlit
 openai
-youtube-transcript-api
-yt-dlp
-watchdog
+requests
 python-dotenv
